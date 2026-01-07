@@ -1,0 +1,216 @@
+import SwiftUI
+import UIKit
+import Combine
+
+// MARK: - Direções
+enum Direction {
+    case up, down, left, right
+}
+
+struct ContentView: View {
+    // MARK: - Estados
+    @State private var snake: [CGPoint] = [CGPoint(x: 10, y: 10)]
+    @State private var food: CGPoint = CGPoint(x: 15, y: 15)
+    @State private var direction: Direction = .right
+    @State private var gameOver = false
+    @State private var score = 0
+    
+    // MARK: - Lógica de Velocidade
+    @State private var gameSpeed: Double = 0.3 // Começa bem lento (0.3s)
+    @State private var timer = Timer.publish(every: 0.3, on: .main, in: .common).autoconnect()
+    
+    let gridSize: CGFloat = 20
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            
+            VStack {
+                // Placar e Indicador de Velocidade
+                VStack(spacing: 5) {
+                    Text("SCORE")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(.gray)
+                    Text("\(score)")
+                        .font(.system(size: 50, weight: .bold, design: .monospaced))
+                        .foregroundColor(.green)
+                    
+                    // Mostra o "Level" de velocidade
+                    Text(String(format: "SPEED: %.2fs", gameSpeed))
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.orange)
+                }
+                .padding(.top, 30)
+                
+                Spacer()
+                
+                // Campo de Jogo
+                GeometryReader { geometry in
+                    ZStack {
+                        Color.white.opacity(0.05)
+                        
+                        Circle()
+                            .fill(Color.red)
+                            .shadow(color: .red, radius: 8)
+                            .frame(width: gridSize, height: gridSize)
+                            .position(x: food.x * gridSize + (gridSize/2), y: food.y * gridSize + (gridSize/2))
+                        
+                        ForEach(0..<snake.count, id: \.self) { index in
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(index == 0 ? Color.green : Color.green.opacity(0.6))
+                                .frame(width: gridSize - 2, height: gridSize - 2)
+                                .position(x: snake[index].x * gridSize + (gridSize/2), y: snake[index].y * gridSize + (gridSize/2))
+                        }
+                    }
+                    .border(Color.white.opacity(0.2), width: 1)
+                    .gesture(
+                        DragGesture(minimumDistance: 20)
+                            .onEnded { value in
+                                processGesture(value: value)
+                            }
+                    )
+                }
+                .aspectRatio(1, contentMode: .fit)
+                .padding(20)
+                
+                Spacer()
+                
+                Text("SETAS OU DESLIZE")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundColor(.gray)
+                    .padding(.bottom, 20)
+            }
+            
+            keyboardShortcuts
+            
+            if gameOver {
+                gameOverOverlay
+            }
+        }
+        // Ouve o timer atual
+        .onReceive(timer) { _ in
+            updateGame()
+        }
+    }
+
+    private var keyboardShortcuts: some View {
+        ZStack {
+            Button("") { changeDirection(to: .up) }.keyboardShortcut(.upArrow, modifiers: [])
+            Button("") { changeDirection(to: .down) }.keyboardShortcut(.downArrow, modifiers: [])
+            Button("") { changeDirection(to: .left) }.keyboardShortcut(.leftArrow, modifiers: [])
+            Button("") { changeDirection(to: .right) }.keyboardShortcut(.rightArrow, modifiers: [])
+        }
+        .opacity(0)
+    }
+
+    private var gameOverOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.9).ignoresSafeArea()
+            VStack(spacing: 25) {
+                Text("GAME OVER")
+                    .font(.system(size: 40, weight: .black, design: .monospaced))
+                    .foregroundColor(.red)
+                
+                Text("PONTOS: \(score)")
+                    .font(.title2)
+                    .foregroundColor(.white)
+                
+                Button(action: restartGame) {
+                    Text("JOGAR NOVAMENTE")
+                        .font(.headline)
+                        .foregroundColor(.black)
+                        .padding(.vertical, 15)
+                        .padding(.horizontal, 40)
+                        .background(Color.green)
+                        .cornerRadius(12)
+                }
+            }
+        }
+    }
+
+    // MARK: - Lógica do Jogo
+    func updateGame() {
+        guard !gameOver else { return }
+        
+        var newHead = snake[0]
+        
+        switch direction {
+        case .up:    newHead.y -= 1
+        case .down:  newHead.y += 1
+        case .left:  newHead.x -= 1
+        case .right: newHead.x += 1
+        }
+        
+        if newHead.x < 0 || newHead.y < 0 || newHead.x >= 20 || newHead.y >= 20 || snake.contains(newHead) {
+            gameOver = true
+            triggerHaptic(style: .heavy)
+            return
+        }
+        
+        snake.insert(newHead, at: 0)
+        
+        if newHead == food {
+            score += 10
+            triggerHaptic(style: .medium)
+            generateNewFood()
+            
+            // ACELERAÇÃO: Reduz o intervalo do timer (mínimo de 0.05s)
+            if gameSpeed > 0.05 {
+                gameSpeed -= 0.01 // Diminui o tempo de espera entre movimentos
+                updateTimer()
+            }
+        } else {
+            snake.removeLast()
+        }
+    }
+    
+    // Função para reiniciar o timer com a nova velocidade
+    func updateTimer() {
+        self.timer.upstream.connect().cancel() // Para o anterior
+        self.timer = Timer.publish(every: gameSpeed, on: .main, in: .common).autoconnect()
+    }
+
+    func changeDirection(to newDirection: Direction) {
+        switch (direction, newDirection) {
+        case (.up, .down), (.down, .up), (.left, .right), (.right, .left):
+            break
+        default:
+            direction = newDirection
+        }
+    }
+
+    func processGesture(value: DragGesture.Value) {
+        let h = value.translation.width
+        let v = value.translation.height
+        if abs(h) > abs(v) {
+            if h > 0 { changeDirection(to: .right) } else { changeDirection(to: .left) }
+        } else {
+            if v > 0 { changeDirection(to: .down) } else { changeDirection(to: .up) }
+        }
+    }
+    
+    func generateNewFood() {
+        food = CGPoint(x: CGFloat(Int.random(in: 0...19)), y: CGFloat(Int.random(in: 0...19)))
+    }
+    
+    func restartGame() {
+        gameSpeed = 0.3 // Reseta a velocidade
+        updateTimer()
+        snake = [CGPoint(x: 10, y: 10)]
+        food = CGPoint(x: 15, y: 15)
+        direction = .right
+        score = 0
+        gameOver = false
+        triggerHaptic(style: .light)
+    }
+    
+    func triggerHaptic(style: UIImpactFeedbackGenerator.FeedbackStyle) {
+        let generator = UIImpactFeedbackGenerator(style: style)
+        generator.prepare()
+        generator.impactOccurred()
+    }
+}
+
+#Preview {
+    ContentView()
+}
